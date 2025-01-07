@@ -1,0 +1,3 @@
+[submodule "HistopathologyFeatureExtractors"]
+	path = HistopathologyFeatureExtractors
+	url = https://github.com/KimiaLabMayo/HistopathologyFeatureExtractors.git

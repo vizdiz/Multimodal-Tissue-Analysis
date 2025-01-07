@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from torch.nn.modules.module import Module
+from ..HistopathologyFeatureExtractors.Histo_feature_extractors import fully_connected, resnet50SSL
     
 class Encoder_overall(Module):
       
@@ -29,12 +30,15 @@ class Encoder_overall(Module):
 
     """
      
-    def __init__(self, dim_in_feat_omics1, dim_out_feat_omics1, dim_in_feat_omics2, dim_out_feat_omics2, dropout=0.0, act=F.relu):
+    def __init__(self, dim_in_feat_omics1, dim_out_feat_omics1, dim_in_feat_omics2, dim_out_feat_omics2, 
+                 dim_in_feat_omics3, dim_out_feat_omics3, dropout=0.0, act=F.relu):
         super(Encoder_overall, self).__init__()
         self.dim_in_feat_omics1 = dim_in_feat_omics1
         self.dim_in_feat_omics2 = dim_in_feat_omics2
+        self.dim_in_feat_omics3 = dim_in_feat_omics3
         self.dim_out_feat_omics1 = dim_out_feat_omics1
         self.dim_out_feat_omics2 = dim_out_feat_omics2
+        self.dim_out_feat_omics3 = dim_out_feat_omics3
         self.dropout = dropout
         self.act = act
         
@@ -42,12 +46,15 @@ class Encoder_overall(Module):
         self.decoder_omics1 = Decoder(self.dim_out_feat_omics1, self.dim_in_feat_omics1)
         self.encoder_omics2 = Encoder(self.dim_in_feat_omics2, self.dim_out_feat_omics2)
         self.decoder_omics2 = Decoder(self.dim_out_feat_omics2, self.dim_in_feat_omics2)
+        self.encoder_omics3 = fully_connected(resnet50SSL(True, True), self.dim_in_feat_omics3, self.dim_out_feat_omics3)
+        self.decoder_omics3 = fully_connected(resnet50SSL(True, True), self.dim_out_feat_omics3, self.dim_in_feat_omics3)
         
         self.atten_omics1 = AttentionLayer(self.dim_out_feat_omics1, self.dim_out_feat_omics1)
         self.atten_omics2 = AttentionLayer(self.dim_out_feat_omics2, self.dim_out_feat_omics2)
+        self.atten_omics3 = AttentionLayer(self.dim_out_feat_omics3, self.dim_out_feat_omics3)
         self.atten_cross = AttentionLayer(self.dim_out_feat_omics1, self.dim_out_feat_omics2)
         
-    def forward(self, features_omics1, features_omics2, adj_spatial_omics1, adj_feature_omics1, adj_spatial_omics2, adj_feature_omics2):
+    def forward(self, features_omics1, features_omics2, adj_spatial_omics1, adj_feature_omics1, adj_spatial_omics2, adj_feature_omics2, features_omics3):
         
         # graph1
         emb_latent_spatial_omics1 = self.encoder_omics1(features_omics1, adj_spatial_omics1)  
@@ -56,6 +63,9 @@ class Encoder_overall(Module):
         # graph2
         emb_latent_feature_omics1 = self.encoder_omics1(features_omics1, adj_feature_omics1)
         emb_latent_feature_omics2 = self.encoder_omics2(features_omics2, adj_feature_omics2)
+
+        # stain
+        emb_latent_omics3 = self.encoder_omics3(features_omics3)
         
         # within-modality attention aggregation layer
         emb_latent_omics1, alpha_omics1 = self.atten_omics1(emb_latent_spatial_omics1, emb_latent_feature_omics1)
@@ -63,26 +73,33 @@ class Encoder_overall(Module):
         
         # between-modality attention aggregation layer
         emb_latent_combined, alpha_omics_1_2 = self.atten_cross(emb_latent_omics1, emb_latent_omics2)
+        emb_latent_cross_modality, alpha_omics_1_2_3 = self.atten_cross(emb_latent_combined, emb_latent_omics3)
         #print('emb_latent_combined:', emb_latent_combined)
         
         # reverse the integrated representation back into the original expression space with modality-specific decoder
-        emb_recon_omics1 = self.decoder_omics1(emb_latent_combined, adj_spatial_omics1)
-        emb_recon_omics2 = self.decoder_omics2(emb_latent_combined, adj_spatial_omics2)
+        emb_recon_omics1 = self.decoder_omics1(emb_latent_cross_modality, adj_spatial_omics1)
+        emb_recon_omics2 = self.decoder_omics2(emb_latent_cross_modality, adj_spatial_omics2)
+        emb_recon_omics3 = self.decoder_omics3(emb_latent_cross_modality, features_omics3)
         
         # consistency encoding
-        emb_latent_omics1_across_recon = self.encoder_omics2(self.decoder_omics2(emb_latent_omics1, adj_spatial_omics2), adj_spatial_omics2) 
-        emb_latent_omics2_across_recon = self.encoder_omics1(self.decoder_omics1(emb_latent_omics2, adj_spatial_omics1), adj_spatial_omics1)
+        # emb_latent_omics1_across_recon = self.encoder_omics2(self.decoder_omics2(emb_latent_omics1, adj_spatial_omics2), adj_spatial_omics2) 
+        # emb_latent_omics2_across_recon = self.encoder_omics1(self.decoder_omics1(emb_latent_omics2, adj_spatial_omics1), adj_spatial_omics1)
         
         results = {'emb_latent_omics1':emb_latent_omics1,
                    'emb_latent_omics2':emb_latent_omics2,
+                   'emb_latent_omics3':emb_latent_omics3,
                    'emb_latent_combined':emb_latent_combined,
+                   'emb_latent_cross_modality':emb_latent_cross_modality,
                    'emb_recon_omics1':emb_recon_omics1,
                    'emb_recon_omics2':emb_recon_omics2,
-                   'emb_latent_omics1_across_recon':emb_latent_omics1_across_recon,
-                   'emb_latent_omics2_across_recon':emb_latent_omics2_across_recon,
+                   'emb_recon_omics3':emb_recon_omics3,
+              #    'emb_latent_omics1_across_recon':emb_latent_omics1_across_recon,
+              #    'emb_latent_omics2_across_recon':emb_latent_omics2_across_recon,
                    'alpha_omics1':alpha_omics1,
                    'alpha_omics2':alpha_omics2,
-                   'alpha':alpha_omics_1_2
+                   'alpha_omics3':alpha_omics3,
+                   'alpha_omics_1_2': alpha_omics_1_2,
+                   'alpha':alpha_omics_1_2_3,
                    }
         
         return results     

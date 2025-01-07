@@ -13,6 +13,7 @@ from torch.backends import cudnn
 from scipy.sparse import coo_matrix
 from sklearn.neighbors import NearestNeighbors
 from sklearn.neighbors import kneighbors_graph 
+from ..HistopathologyFeatureExtractors.Histo_feature_extractors import get_feature_extractor
     
 def construct_neighbor_graph(adata_omics1, adata_omics2, datatype='SPOTS', n_neighbors=3): 
     """
